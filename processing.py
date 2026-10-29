@@ -87,6 +87,24 @@ def order_points(pts):
     return rect
 
 
+# def warp_perspective(img, biggest, crop=True):
+#     """Flattens the paper into a straight rectangle."""
+#     if biggest is None:
+#         return img
+
+#     rect = order_points(biggest)
+#     tl, tr, bl, br = rect
+#     width = int(max(np.linalg.norm(br - bl), np.linalg.norm(tr - tl)))
+#     height = int(max(np.linalg.norm(tr - br), np.linalg.norm(tl - bl)))
+#     if width < 50 or height < 50:
+#         return img
+
+#     pts1 = np.float32(rect)
+#     pts2 = np.float32([[0, 0], [width, 0], [0, height], [width, height]])
+#     matrix = cv2.getPerspectiveTransform(pts1, pts2)
+#     img_warp = cv2.warpPerspective(img, matrix, (width, height))
+#     return auto_crop(img_warp) if crop else img_warp
+
 def warp_perspective(img, biggest, crop=True):
     """Flattens the paper into a straight rectangle."""
     if biggest is None:
@@ -106,6 +124,20 @@ def warp_perspective(img, biggest, crop=True):
     return auto_crop(img_warp) if crop else img_warp
 
 
+# def get_contours(edges, min_area=500):
+#     """Finds the biggest 4-corner shape. We assume it is the paper."""
+#     contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+#     biggest, max_area = None, 0
+
+#     for contour in contours:
+#         area = cv2.contourArea(contour)
+#         if area > min_area:
+#             peri = cv2.arcLength(contour, True)
+#             approx = cv2.approxPolyDP(contour, 0.02 * peri, True)
+#             if len(approx) == 4 and area > max_area:
+#                 biggest, max_area = approx, area
+
+#     return biggest.reshape(4, 2) if biggest is not None else None
 def get_contours(edges, min_area=500):
     """Finds the biggest 4-corner shape. We assume it is the paper."""
     contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -150,6 +182,140 @@ def rotate_image(img, angle=0):
     return cv2.warpAffine(img, matrix, (w, h), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE)
 
 
+# def detect_document_corners(img):
+#     """
+#     Detects the 4 corners of the document boundary.
+
+#     IPCV Syllabus Mapping - Unit I & III:
+#     Uses Gaussian smoothing, Canny edge detection (50, 150), morphological closing,
+#     and polygon approximation (approxPolyDP) to segment the document paper quadrilateral boundary.
+
+#     Returns:
+#         numpy.ndarray of shape (4, 2) in original image coordinate space, or None.
+#     """
+#     h, w = img.shape[:2]
+#     small = cv2.resize(img, (960, 1280))
+#     gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY) if img.ndim == 3 else small.copy()
+#     blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+
+#     # 1. Standard Canny gradient with morphological close
+#     edges = cv2.Canny(blurred, 50, 150)
+#     kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (7, 7))
+#     edges = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, kernel)
+
+#     contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+#     min_area = 0.05 * 960 * 1280
+
+#     for c in sorted(contours, key=cv2.contourArea, reverse=True)[:5]:
+#         area = cv2.contourArea(c)
+#         if area > min_area:
+#             peri = cv2.arcLength(c, True)
+#             approx = cv2.approxPolyDP(c, 0.02 * peri, True)
+#             if len(approx) == 4 and cv2.isContourConvex(approx):
+#                 return approx.reshape(4, 2).astype(np.float32) * np.array([w / 960.0, h / 1280.0], dtype=np.float32)
+
+#     # 2. Adaptive Otsu fallback for soft indoor lighting
+#     _, otsu_bin = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+#     edges_otsu = cv2.Canny(otsu_bin, 50, 150)
+#     edges_otsu = cv2.morphologyEx(edges_otsu, cv2.MORPH_CLOSE, kernel)
+#     contours_otsu, _ = cv2.findContours(edges_otsu, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+#     for c in sorted(contours_otsu, key=cv2.contourArea, reverse=True)[:5]:
+#         area = cv2.contourArea(c)
+#         if area > min_area:
+#             peri = cv2.arcLength(c, True)
+#             approx = cv2.approxPolyDP(c, 0.02 * peri, True)
+#             if len(approx) == 4 and cv2.isContourConvex(approx):
+#                 return approx.reshape(4, 2).astype(np.float32) * np.array([w / 960.0, h / 1280.0], dtype=np.float32)
+
+#     return None
+
+
+# def visualize_document_boundary(img, corners=None):
+#     """
+#     Draws document boundary polygon and highlighted corner markers (TL, TR, BL, BR).
+
+#     IPCV Syllabus Mapping - Unit I & III:
+#     Visualizes pixel coordinates, spatial orientation, and quadrilateral segmentation.
+#     """
+#     annotated = img.copy()
+#     if corners is None:
+#         corners = detect_document_corners(img)
+
+#     if corners is not None:
+#         ordered = order_points(corners)
+#         pts = ordered.astype(np.int32)
+#         cv2.polylines(annotated, [pts], isClosed=True, color=(0, 255, 0), thickness=4)
+#         labels = ["TL", "TR", "BL", "BR"]
+#         colors = [(255, 0, 0), (0, 165, 255), (0, 0, 255), (255, 0, 255)]  # BGR
+#         radius = max(6, int(min(annotated.shape[:2]) * 0.015))
+#         for (x, y), label, color in zip(pts, labels, colors):
+#             cv2.circle(annotated, (int(x), int(y)), radius, color, -1)
+#             cv2.putText(
+#                 annotated,
+#                 label,
+#                 (int(x) + 10, int(y) - 10),
+#                 cv2.FONT_HERSHEY_SIMPLEX,
+#                 0.8,
+#                 color,
+#                 2,
+#                 cv2.LINE_AA,
+#             )
+#     return annotated
+
+
+# def apply_threshold(img, method="otsu", block_size=11, c=2):
+#     """
+#     Applies global or adaptive thresholding to convert image to binary representation.
+
+#     IPCV Syllabus Mapping - Unit III:
+#     - Otsu Thresholding: Global optimal thresholding. Automatically calculates optimum
+#       threshold t that maximizes between-class variance sigma_B^2(t).
+#     - Adaptive Gaussian Thresholding: Local threshold calculated as weighted Gaussian
+#       sum of neighboring window (block_size x block_size) minus constant C.
+#     - Adaptive Mean Thresholding: Local threshold calculated as arithmetic mean of
+#       neighboring window minus constant C.
+#     """
+#     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) if img.ndim == 3 else img.copy()
+
+#     bsize = max(3, int(block_size))
+#     if bsize % 2 == 0:
+#         bsize += 1
+
+#     if method == "otsu":
+#         _, thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+#         return thresh
+#     elif method == "adaptive_gaussian":
+#         return cv2.adaptiveThreshold(
+#             gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, bsize, c
+#         )
+#     elif method == "adaptive_mean":
+#         return cv2.adaptiveThreshold(
+#             gray, 255, cv2.ADAPTIVE_THRESH_MEAN_C, cv2.THRESH_BINARY, bsize, c
+#         )
+#     else:
+#         raise ValueError(
+#             f"Unknown threshold method '{method}'. Supported: 'otsu', 'adaptive_gaussian', 'adaptive_mean'"
+#         )
+
+
+# def compute_grayscale_histogram(img):
+#     """
+#     Computes 256-bin intensity histogram of a grayscale or BGR image.
+
+#     IPCV Syllabus Mapping - Unit II:
+#     Represents the discrete probability distribution of pixel intensity levels r_k.
+#     p(r_k) = n_k / MN, where n_k is number of pixels with gray level r_k.
+
+#     Parameters:
+#         img: 2D grayscale array or 3D BGR array.
+
+#     Returns:
+#         1D numpy array of length 256 containing raw pixel counts.
+#     """
+#     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) if img.ndim == 3 else img
+#     hist = cv2.calcHist([gray], [0], None, [256], [0, 256])
+#     return hist.flatten()
 def detect_document_corners(img):
     """
     Detects the 4 corners of the document boundary.
@@ -284,6 +450,7 @@ def compute_grayscale_histogram(img):
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) if img.ndim == 3 else img
     hist = cv2.calcHist([gray], [0], None, [256], [0, 256])
     return hist.flatten()
+
 
 
 def apply_histogram_equalization(img, method="global", clip_limit=2.0, tile_grid_size=(8, 8)):

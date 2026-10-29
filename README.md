@@ -29,7 +29,7 @@ Capturing documents using smartphone cameras is standard practice, but mobile ca
 1. **Automated Document Rectification**: Detect paper boundaries in 2D space, extract four corner coordinates, and compute a homography transformation to project skewed sheets into flat, top-down rectangular views.
 2. **Noise Reduction with Edge Preservation**: Provide linear (Gaussian) and non-linear order-statistic (Median) filters to eliminate noise without degrading sharp character strokes.
 3. **Adaptive Contrast & Lighting Normalization**: Separate foreground ink from background paper using global (Otsu) and localized (Adaptive Gaussian/Mean) thresholding, alongside Global and Tiled (CLAHE) Histogram Equalization.
-4. **Interactive Laboratory Dashboard**: Present a clean, user-friendly Streamlit interface with non-technical tool naming, side-by-side comparison, real-time 256-bin intensity histograms, and direct multi-page PDF generation.
+4. **Interactive Laboratory Dashboard**: Present a clean, user-friendly Streamlit interface with non-technical tool naming, side-by-side comparison, and direct multi-page PDF generation.
 5. **Practical IPCV Curriculum Demonstration**: Translate theoretical syllabus concepts from Units I, II, and III into modular, verifiable code.
 
 ---
@@ -131,7 +131,6 @@ flowchart TD
 
     subgraph S4["4. User Interface & Output (Streamlit)"]
         G1 & G2 & G3 & G4 --> H1["Side-by-Side Original vs. Processed View"]
-        H1 --> H2["256-Bin Intensity Histogram Render (Native OpenCV)"]
         H1 --> H3["In-Memory Multi-Page PDF Compilation (PIL BytesIO)"]
         H3 --> H4["Download Scanned PDF Button"]
     end
@@ -146,9 +145,9 @@ flowchart TD
 | **Member 1** | **Noise Filtering & Smoothing Specialist** | 
  • Implemented linear spatial Gaussian smoothing (`cv2.GaussianBlur`)<br>• Implemented non-linear order-statistic median filtering (`cv2.medianBlur`)<br>• Designed dynamic aperture kernel controls ($3 \times 3$ to $15 \times 15$)<br>• Authored noise attenuation comparative analysis in [`processing.py`](file:///d:/Neelam_D/Coding/IPCV_DOC_SCAN/Document-Scanner/processing.py) |
 | **Member 2** | **Segmentation & Thresholding Specialist** |
- • Engineered Canny edge & Douglas-Peucker 4-corner detection (`approxPolyDP`)<br>• Created topological 4-point coordinate ordering algorithm (`order_points`)<br>• Implemented global Otsu thresholding and localized Adaptive Gaussian/Mean thresholding<br>• Developed boundary & corner visualization overlay in [`processing.py`](file:///d:/Neelam_D/Coding/IPCV_DOC_SCAN\Document-Scanner\processing.py) |
+ • Engineered Canny edge & Douglas-Peucker 4-corner detection (`approxPolyDP`)<br>• Created topological 4-point coordinate ordering algorithm (`order_points`)<br>• Implemented global Otsu thresholding and localized Adaptive Gaussian/Mean thresholding |
 | **Member 3** | **Histogram & Enhancement Specialist** |
-• Implemented 256-bin discrete intensity histogram generation (`cv2.calcHist`)<br>• Built Global Histogram Equalization preserving chromaticity via YCrCb/LAB<br>• Integrated Contrast Limited Adaptive Histogram Equalization (CLAHE)<br>• Developed dependency-free native OpenCV histogram renderer in [`processing.py`](file:///d:/Neelam_D/Coding/IPCV_DOC_SCAN\Document-Scanner\processing.py) |
+• Implemented 256-bin discrete intensity histogram generation (`cv2.calcHist`)<br>• Built Global Histogram Equalization preserving chromaticity via YCrCb/LAB<br>• Integrated Contrast Limited Adaptive Histogram Equalization (CLAHE) |
 | **Member 4** | **UI/UX, Integration & Documentation Lead** |
  • Architected Streamlit web application with beginner-friendly tools in [`main.py`](file:///d:/Neelam_D/Coding/IPCV_DOC_SCAN\Document-Scanner\main.py)<br>• Built side-by-side comparison view with mobile/touch accessible descriptions<br>• Created multi-page in-memory PDF synthesis engine (`BytesIO`)<br>• Built automated validation test suite and authored comprehensive [`README.md`](file:///d:/Neelam_D/Coding/IPCV_DOC_SCAN\Document-Scanner\README.md) |
 

@@ -122,32 +122,79 @@ def get_contours(edges, min_area=500):
     return biggest.reshape(4, 2) if biggest is not None else None
 
 
+# def rotate_image(img, angle=0):
+#     """
+#     Rotates an image by a specified angle in degrees.
+
+#     IPCV Syllabus Mapping - Unit I:
+#     Geometric Transformations (Affine 2D Rotation Matrix).
+#     - 90, 180, 270 degrees: lossless orthogonal matrix rotation.
+#     - Arbitrary angles: calculates 2x3 affine rotation matrix around image center
+#       and resamples via cv2.warpAffine.
+#     """
+#     if angle == 0 or angle is None:
+#         return img.copy()
+
+#     # Right-angle shortcuts
+#     if angle in (90, -270):
+#         return cv2.rotate(img, cv2.ROTATE_90_CLOCKWISE)
+#     elif angle in (180, -180):
+#         return cv2.rotate(img, cv2.ROTATE_180)
+#     elif angle in (270, -90):
+#         return cv2.rotate(img, cv2.ROTATE_90_COUNTERCLOCKWISE)
+
+#     # Arbitrary angle rotation via 2x3 Affine Rotation Matrix (Unit I)
+#     h, w = img.shape[:2]
+#     center = (w // 2, h // 2)
+#     matrix = cv2.getRotationMatrix2D(center, angle, 1.0)
+#     return cv2.warpAffine(img, matrix, (w, h), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE)
+
 def rotate_image(img, angle=0):
     """
-    Rotates an image by a specified angle in degrees.
+    Rotate an image without cropping any of its content.
 
-    IPCV Syllabus Mapping - Unit I:
-    Geometric Transformations (Affine 2D Rotation Matrix).
-    - 90, 180, 270 degrees: lossless orthogonal matrix rotation.
-    - Arbitrary angles: calculates 2x3 affine rotation matrix around image center
-      and resamples via cv2.warpAffine.
+    Right-angle rotations use OpenCV's lossless rotate operations.
+    Arbitrary angles expand the output canvas to fit the rotated image.
     """
     if angle == 0 or angle is None:
         return img.copy()
 
-    # Right-angle shortcuts
-    if angle in (90, -270):
+    # Right-angle rotations: preserve all pixels
+    if angle % 360 == 90:
         return cv2.rotate(img, cv2.ROTATE_90_CLOCKWISE)
-    elif angle in (180, -180):
+    elif angle % 360 == 180:
         return cv2.rotate(img, cv2.ROTATE_180)
-    elif angle in (270, -90):
+    elif angle % 360 == 270:
         return cv2.rotate(img, cv2.ROTATE_90_COUNTERCLOCKWISE)
 
-    # Arbitrary angle rotation via 2x3 Affine Rotation Matrix (Unit I)
+    # Arbitrary-angle rotation with an expanded canvas
     h, w = img.shape[:2]
-    center = (w // 2, h // 2)
+    center = (w / 2.0, h / 2.0)
+
     matrix = cv2.getRotationMatrix2D(center, angle, 1.0)
-    return cv2.warpAffine(img, matrix, (w, h), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE)
+
+    # Calculate the dimensions needed to fit the rotated image
+    cos_a = abs(matrix[0, 0])
+    sin_a = abs(matrix[0, 1])
+
+    new_w = int(np.ceil(h * sin_a + w * cos_a))
+    new_h = int(np.ceil(h * cos_a + w * sin_a))
+
+    # Shift the image so its center aligns with the new canvas center
+    matrix[0, 2] += new_w / 2.0 - center[0]
+    matrix[1, 2] += new_h / 2.0 - center[1]
+
+    # Rotate onto the expanded canvas; fill empty areas with white
+    return cv2.warpAffine(
+        img,
+        matrix,
+        (new_w, new_h),
+        flags=cv2.INTER_LINEAR,
+        borderMode=cv2.BORDER_CONSTANT,
+        borderValue=(255, 255, 255) if img.ndim == 3 else 255
+    )
+
+
 
 
 def detect_document_corners(img):

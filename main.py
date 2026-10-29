@@ -13,6 +13,7 @@ from processing import (
     crop_and_straighten,
     detect_document_corners,
     draw_crop_box,
+    ensure_bgr,
     order_points,
     process_image,
     rotate_image,
@@ -31,7 +32,7 @@ CSS = """
     .title { color: #2c3e50; font-size: 2.3rem; font-weight: 700; margin: 0.5rem 0; }
     .subheader { color: #7f8c8d; font-size: 1.05rem; }
     .stDownloadButton button { background: #3498db !important; color: white !important;
-                               border-radius: 25px; padding: 0.5rem 2rem; transition: all 0.3s; }
+                                border-radius: 25px; padding: 0.5rem 2rem; transition: all 0.3s; }
     .stDownloadButton button:hover { background: #2980b9 !important; transform: translateY(-1px); }
 </style>
 """
@@ -51,10 +52,8 @@ OUTPUTS = {
 def to_pil(img_array):
     """Turns a numpy image array into a PIL Image for display and PDF saving.
     Grayscale (2D) or BGR (3D) -> RGB PIL Image."""
-    if img_array.ndim == 3:
-        rgb = cv2.cvtColor(img_array, cv2.COLOR_BGR2RGB)
-    else:
-        rgb = cv2.cvtColor(img_array, cv2.COLOR_GRAY2RGB)
+    img_bgr = ensure_bgr(img_array)
+    rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
     return Image.fromarray(rgb)
 
 
@@ -153,7 +152,7 @@ def main():
                 if f"latest_res_{i}" in st.session_state:
                     if f"history_stack_{i}" not in st.session_state:
                         st.session_state[f"history_stack_{i}"] = []
-                    st.session_state[f"history_stack_{i}"].append((operation, st.session_state[f"latest_res_{i}"].copy()))
+                    st.session_state[f"history_stack_{i}"].append((operation, ensure_bgr(st.session_state[f"latest_res_{i}"].copy())))
             st.rerun()
     with col_sb2:
         if st.sidebar.button("🗑️ Reset All", key="sb_reset_all", help="Reset all pages back to original photo"):
@@ -208,10 +207,10 @@ def main():
 
                     # Working input: use previous kept result if available, else rotated raw photo
                     if history_stack:
-                        working_img = history_stack[-1][1].copy()
+                        working_img = ensure_bgr(history_stack[-1][1].copy())
                         input_caption = f"Input Image (Kept: {history_stack[-1][0]})"
                     else:
-                        working_img = raw_img.copy()
+                        working_img = ensure_bgr(raw_img.copy())
                         input_caption = "Original Image"
 
                     h, w = working_img.shape[:2]
@@ -275,6 +274,7 @@ def main():
                         with c_right:
                             st.image(scanned_pil, caption=f"Result: {operation}", use_container_width=True)
 
+                    result = ensure_bgr(result)
                     scanned_images.append(scanned_pil)
                     st.session_state[f"latest_res_{idx}"] = result.copy()
 

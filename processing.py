@@ -1,7 +1,38 @@
-
-
 import cv2
 import numpy as np
+
+
+def ensure_bgr(img):
+    """
+    Ensures that the input image is a valid 3-channel uint8 BGR numpy array.
+    Guarantees channel invariance across all IPCV processing tools in the pipeline.
+    Handles:
+    - 2D grayscale / binary images (H, W) -> converted to 3-channel BGR.
+    - 3D 1-channel images (H, W, 1) -> squeezed and converted to 3-channel BGR.
+    - 4-channel BGRA images (H, W, 4) -> converted to 3-channel BGR.
+    - 3-channel BGR images (H, W, 3) -> returned as valid uint8 array.
+    """
+    if img is None:
+        return None
+
+    if not isinstance(img, np.ndarray):
+        img = np.array(img, dtype=np.uint8)
+
+    if img.dtype != np.uint8:
+        img = np.clip(img, 0, 255).astype(np.uint8)
+
+    if img.ndim == 2:
+        return cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
+    elif img.ndim == 3:
+        channels = img.shape[2]
+        if channels == 1:
+            return cv2.cvtColor(img[:, :, 0], cv2.COLOR_GRAY2BGR)
+        elif channels == 3:
+            return img
+        elif channels == 4:
+            return cv2.cvtColor(img, cv2.COLOR_BGRA2BGR)
+
+    raise ValueError(f"Unsupported image shape for BGR conversion: {img.shape}")
 
 
 def apply_noise_filter(img, method="gaussian", ksize=5):
@@ -21,21 +52,23 @@ def apply_noise_filter(img, method="gaussian", ksize=5):
         ksize: Aperture linear size. Must be an odd integer >= 3 (e.g. 3, 5, 7).
 
     Returns:
-        Filtered image as numpy array.
+        Filtered image as standard 3-channel BGR numpy array.
     """
+    img_bgr = ensure_bgr(img)
     if method == "none" or method is None:
-        return img.copy()
+        return img_bgr.copy()
 
     k = max(3, int(ksize))
     if k % 2 == 0:
         k += 1
 
     if method == "gaussian":
-        return cv2.GaussianBlur(img, (k, k), 0)
+        res = cv2.GaussianBlur(img_bgr, (k, k), 0)
     elif method == "median":
-        return cv2.medianBlur(img, k)
+        res = cv2.medianBlur(img_bgr, k)
     else:
         raise ValueError(f"Unknown filter method '{method}'. Supported: 'gaussian', 'median', 'none'")
+    return ensure_bgr(res)
 
 
 def is_photo(img):
@@ -43,7 +76,14 @@ def is_photo(img):
     A text page is almost only white paper and black ink, so it has
     almost NO colour. A photo has a lot of colour (blue wall, skin...).
     We count how many pixels are 'colourful'."""
-    small = cv2.resize(img, (400, 400), interpolation=cv2.INTER_AREA)
+    if img is None:
+        return False
+    # If 2D grayscale or 1-channel, it has zero chroma -> text page
+    if img.ndim == 2 or (img.ndim == 3 and img.shape[2] == 1):
+        return False
+
+    img_bgr = ensure_bgr(img)
+    small = cv2.resize(img_bgr, (400, 400), interpolation=cv2.INTER_AREA)
     hsv = cv2.cvtColor(small, cv2.COLOR_BGR2HSV)
     # S = saturation (how strong the colour is), V = brightness
     colourful = (hsv[..., 1] > 60) & (hsv[..., 2] > 50)
@@ -52,27 +92,33 @@ def is_photo(img):
 
 def auto_crop(img):
     """Cuts the empty borders around a TEXT page. Ignores tiny specks."""
-    h, w = img.shape[:2]
-    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    if img is None:
+        return img
+    img_bgr = ensure_bgr(img)
+    h, w = img_bgr.shape[:2]
+    gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
     _, ink = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
 
     k = max(15, w // 12)
     blocks = cv2.dilate(ink, cv2.getStructuringElement(cv2.MORPH_RECT, (k, k)))
     contours, _ = cv2.findContours(blocks, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     if not contours:
-        return img
+        return img_bgr
 
     boxes = [cv2.boundingRect(c) for c in contours]
     biggest_area = max(bw * bh for _, _, bw, bh in boxes)
     keep = [b for b in boxes if b[2] * b[3] >= 0.10 * biggest_area]
+    if not keep:
+        return img_bgr
+
     x1 = min(b[0] for b in keep)
     y1 = min(b[1] for b in keep)
     x2 = max(b[0] + b[2] for b in keep)
     y2 = max(b[1] + b[3] for b in keep)
 
     if (x2 - x1) * (y2 - y1) < 0.10 * w * h:
-        return img
-    return img[y1:y2, x1:x2]
+        return img_bgr
+    return img_bgr[y1:y2, x1:x2]
 
 
 def order_points(pts):
@@ -89,21 +135,23 @@ def order_points(pts):
 
 def warp_perspective(img, biggest, crop=True):
     """Flattens the paper into a straight rectangle."""
-    if biggest is None:
+    if biggest is None or img is None:
         return img
 
+    img_bgr = ensure_bgr(img)
     rect = order_points(biggest)
     tl, tr, bl, br = rect
     width = int(max(np.linalg.norm(br - bl), np.linalg.norm(tr - tl)))
     height = int(max(np.linalg.norm(tr - br), np.linalg.norm(tl - bl)))
     if width < 50 or height < 50:
-        return img
+        return img_bgr
 
     pts1 = np.float32(rect)
     pts2 = np.float32([[0, 0], [width, 0], [0, height], [width, height]])
     matrix = cv2.getPerspectiveTransform(pts1, pts2)
-    img_warp = cv2.warpPerspective(img, matrix, (width, height))
-    return auto_crop(img_warp) if crop else img_warp
+    img_warp = cv2.warpPerspective(img_bgr, matrix, (width, height))
+    res = auto_crop(img_warp) if crop else img_warp
+    return ensure_bgr(res)
 
 
 def get_contours(edges, min_area=500):
@@ -132,22 +180,28 @@ def rotate_image(img, angle=0):
     - Arbitrary angles: calculates 2x3 affine rotation matrix around image center
       and resamples via cv2.warpAffine.
     """
+    if img is None:
+        return None
+    img_bgr = ensure_bgr(img)
+
     if angle == 0 or angle is None:
-        return img.copy()
+        return img_bgr.copy()
 
     # Right-angle shortcuts
     if angle in (90, -270):
-        return cv2.rotate(img, cv2.ROTATE_90_CLOCKWISE)
+        res = cv2.rotate(img_bgr, cv2.ROTATE_90_CLOCKWISE)
     elif angle in (180, -180):
-        return cv2.rotate(img, cv2.ROTATE_180)
+        res = cv2.rotate(img_bgr, cv2.ROTATE_180)
     elif angle in (270, -90):
-        return cv2.rotate(img, cv2.ROTATE_90_COUNTERCLOCKWISE)
+        res = cv2.rotate(img_bgr, cv2.ROTATE_90_COUNTERCLOCKWISE)
+    else:
+        # Arbitrary angle rotation via 2x3 Affine Rotation Matrix (Unit I)
+        h, w = img_bgr.shape[:2]
+        center = (w // 2, h // 2)
+        matrix = cv2.getRotationMatrix2D(center, angle, 1.0)
+        res = cv2.warpAffine(img_bgr, matrix, (w, h), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE)
 
-    # Arbitrary angle rotation via 2x3 Affine Rotation Matrix (Unit I)
-    h, w = img.shape[:2]
-    center = (w // 2, h // 2)
-    matrix = cv2.getRotationMatrix2D(center, angle, 1.0)
-    return cv2.warpAffine(img, matrix, (w, h), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE)
+    return ensure_bgr(res)
 
 
 def detect_document_corners(img):
@@ -161,12 +215,15 @@ def detect_document_corners(img):
     Returns:
         numpy.ndarray of shape (4, 2) in original image coordinate space, or None.
     """
-    h, w = img.shape[:2]
+    if img is None:
+        return None
+    img_bgr = ensure_bgr(img)
+    h, w = img_bgr.shape[:2]
     max_dim = 1280.0
     scale = max_dim / max(h, w) if max(h, w) > max_dim else 1.0
     nh, nw = int(h * scale), int(w * scale)
-    small = cv2.resize(img, (nw, nh), interpolation=cv2.INTER_AREA) if scale < 1.0 else img.copy()
-    gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY) if small.ndim == 3 else small.copy()
+    small = cv2.resize(img_bgr, (nw, nh), interpolation=cv2.INTER_AREA) if scale < 1.0 else img_bgr.copy()
+    gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
     blurred = cv2.GaussianBlur(gray, (5, 5), 0)
 
     min_area = 0.05 * nw * nh
@@ -217,10 +274,7 @@ def draw_crop_box(img, pts):
         Annotated BGR image with 4 distinct corner dots, colored outlines,
         and connecting polygon lines.
     """
-    annotated = img.copy()
-    if annotated.ndim == 2:
-        annotated = cv2.cvtColor(annotated, cv2.COLOR_GRAY2BGR)
-
+    annotated = ensure_bgr(img).copy()
     h, w = annotated.shape[:2]
     pts_int = pts.astype(np.int32)
     # Order for polygon: TL -> TR -> BR -> BL
@@ -276,16 +330,20 @@ def crop_and_straighten(img, pts):
     Crops and straightens the region within 4 corner dots using perspective homography.
     pts: np.ndarray of shape (4, 2) in order [TL, TR, BL, BR].
     """
+    if img is None:
+        return None
+    img_bgr = ensure_bgr(img)
     rect = order_points(pts)
     tl, tr, bl, br = rect
     width = int(max(np.linalg.norm(br - bl), np.linalg.norm(tr - tl)))
     height = int(max(np.linalg.norm(tr - br), np.linalg.norm(tl - bl)))
     if width < 30 or height < 30:
-        return img
+        return img_bgr
     pts1 = np.float32(rect)
     pts2 = np.float32([[0, 0], [width, 0], [0, height], [width, height]])
     matrix = cv2.getPerspectiveTransform(pts1, pts2)
-    return cv2.warpPerspective(img, matrix, (width, height))
+    warped = cv2.warpPerspective(img_bgr, matrix, (width, height))
+    return ensure_bgr(warped)
 
 
 def straighten_document(img, crop=False):
@@ -303,14 +361,17 @@ def straighten_document(img, crop=False):
 
     Returns:
         (straightened_image, detected_corners)
-        - straightened_image: Rectified image (or copy of original if corners not detected)
+        - straightened_image: Rectified 3-channel BGR image
         - detected_corners: np.ndarray of shape (4, 2) or None
     """
-    corners = detect_document_corners(img)
+    if img is None:
+        return None, None
+    img_bgr = ensure_bgr(img)
+    corners = detect_document_corners(img_bgr)
     if corners is not None:
-        straightened = warp_perspective(img, corners, crop=crop)
-        return straightened, corners
-    return img.copy(), None
+        straightened = warp_perspective(img_bgr, corners, crop=crop)
+        return ensure_bgr(straightened), corners
+    return img_bgr.copy(), None
 
 
 def visualize_document_boundary(img, corners=None):
@@ -320,9 +381,9 @@ def visualize_document_boundary(img, corners=None):
     IPCV Syllabus Mapping - Unit I & III:
     Visualizes pixel coordinates, spatial orientation, and quadrilateral segmentation.
     """
-    annotated = img.copy()
+    annotated = ensure_bgr(img).copy()
     if corners is None:
-        corners = detect_document_corners(img)
+        corners = detect_document_corners(annotated)
 
     if corners is not None:
         ordered = order_points(corners)
@@ -357,8 +418,12 @@ def apply_threshold(img, method="otsu", block_size=11, c=2):
       sum of neighboring window (block_size x block_size) minus constant C.
     - Adaptive Mean Thresholding: Local threshold calculated as arithmetic mean of
       neighboring window minus constant C.
+
+    Returns:
+        Standard 3-channel BGR binary image (values 0 and 255) for pipeline invariance.
     """
-    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) if img.ndim == 3 else img.copy()
+    img_bgr = ensure_bgr(img)
+    gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
 
     bsize = max(3, int(block_size))
     if bsize % 2 == 0:
@@ -366,19 +431,20 @@ def apply_threshold(img, method="otsu", block_size=11, c=2):
 
     if method == "otsu":
         _, thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-        return thresh
     elif method == "adaptive_gaussian":
-        return cv2.adaptiveThreshold(
+        thresh = cv2.adaptiveThreshold(
             gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, bsize, c
         )
     elif method == "adaptive_mean":
-        return cv2.adaptiveThreshold(
+        thresh = cv2.adaptiveThreshold(
             gray, 255, cv2.ADAPTIVE_THRESH_MEAN_C, cv2.THRESH_BINARY, bsize, c
         )
     else:
         raise ValueError(
             f"Unknown threshold method '{method}'. Supported: 'otsu', 'adaptive_gaussian', 'adaptive_mean'"
         )
+
+    return ensure_bgr(thresh)
 
 
 def compute_grayscale_histogram(img):
@@ -395,7 +461,8 @@ def compute_grayscale_histogram(img):
     Returns:
         1D numpy array of length 256 containing raw pixel counts.
     """
-    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) if img.ndim == 3 else img
+    img_bgr = ensure_bgr(img)
+    gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
     hist = cv2.calcHist([gray], [0], None, [256], [0, 256])
     return hist.flatten()
 
@@ -418,27 +485,23 @@ def apply_histogram_equalization(img, method="global", clip_limit=2.0, tile_grid
         tile_grid_size: Tile grid tuple for CLAHE.
 
     Returns:
-        Equalized image matching input format.
+        Equalized standard 3-channel BGR image.
     """
-    is_color = img.ndim == 3
+    img_bgr = ensure_bgr(img)
 
     if method == "global":
-        if is_color:
-            ycrcb = cv2.cvtColor(img, cv2.COLOR_BGR2YCrCb)
-            ycrcb[:, :, 0] = cv2.equalizeHist(ycrcb[:, :, 0])
-            return cv2.cvtColor(ycrcb, cv2.COLOR_YCrCb2BGR)
-        else:
-            return cv2.equalizeHist(img)
+        ycrcb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2YCrCb)
+        ycrcb[:, :, 0] = cv2.equalizeHist(ycrcb[:, :, 0])
+        res = cv2.cvtColor(ycrcb, cv2.COLOR_YCrCb2BGR)
     elif method == "clahe":
         clahe = cv2.createCLAHE(clipLimit=clip_limit, tileGridSize=tile_grid_size)
-        if is_color:
-            ycrcb = cv2.cvtColor(img, cv2.COLOR_BGR2YCrCb)
-            ycrcb[:, :, 0] = clahe.apply(ycrcb[:, :, 0])
-            return cv2.cvtColor(ycrcb, cv2.COLOR_YCrCb2BGR)
-        else:
-            return clahe.apply(img)
+        ycrcb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2YCrCb)
+        ycrcb[:, :, 0] = clahe.apply(ycrcb[:, :, 0])
+        res = cv2.cvtColor(ycrcb, cv2.COLOR_YCrCb2BGR)
     else:
         raise ValueError(f"Unknown equalization method '{method}'. Supported: 'global', 'clahe'")
+
+    return ensure_bgr(res)
 
 
 def render_histogram_image(img, width=256, height=120, color=(52, 152, 219)):
@@ -458,14 +521,16 @@ def render_histogram_image(img, width=256, height=120, color=(52, 152, 219)):
 
 
 def draw_contour(img, biggest):
+    annotated = ensure_bgr(img).copy()
     if biggest is not None:
-        cv2.polylines(img, [biggest.astype(np.int32)], True, (0, 255, 0), 3)
-    return img
+        cv2.polylines(annotated, [biggest.astype(np.int32)], True, (0, 255, 0), 3)
+    return annotated
 
 
 def enhance_text_page(img):
-    """For TEXT pages: even light, white paper, dark sharp text (grey output)."""
-    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    """For TEXT pages: even light, white paper, dark sharp text (clean high-contrast output)."""
+    img_bgr = ensure_bgr(img)
+    gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
 
     h, w = gray.shape
     if w < 1600:
@@ -482,13 +547,15 @@ def enhance_text_page(img):
     out = cv2.LUT(norm, lut)
 
     blur = cv2.GaussianBlur(out, (0, 0), 1.2)
-    return cv2.addWeighted(out, 1.6, blur, -0.6, 0)
+    sharp = cv2.addWeighted(out, 1.6, blur, -0.6, 0)
+    return ensure_bgr(sharp)
 
 
 def enhance_photo(img):
     """For PHOTOS: keep the colours and the faces. Only fix light a little
     and make it a bit sharper (colour output)."""
-    lab = cv2.cvtColor(img, cv2.COLOR_BGR2LAB)
+    img_bgr = ensure_bgr(img)
+    lab = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2LAB)
     l, a, b = cv2.split(lab)
 
     # CLAHE = makes dark and bright parts balanced, in small tiles
@@ -497,7 +564,8 @@ def enhance_photo(img):
 
     out = cv2.cvtColor(cv2.merge([l, a, b]), cv2.COLOR_LAB2BGR)
     blur = cv2.GaussianBlur(out, (0, 0), 1.2)
-    return cv2.addWeighted(out, 1.4, blur, -0.4, 0)
+    sharp = cv2.addWeighted(out, 1.4, blur, -0.4, 0)
+    return ensure_bgr(sharp)
 
 
 def enhance_photo_gray(img):
@@ -505,20 +573,23 @@ def enhance_photo_gray(img):
     Step 1: change colour to shades of grey (grayscale).
     Step 2: balance the light, so face and shirt are both visible.
     Step 3: sharpen a little."""
-    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)   # colour -> grey shades
+    img_bgr = ensure_bgr(img)
+    gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)   # colour -> grey shades
 
     # CLAHE = balances dark and bright parts in small tiles
     clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
     gray = clahe.apply(gray)
 
     blur = cv2.GaussianBlur(gray, (0, 0), 1.2)
-    return cv2.addWeighted(gray, 1.4, blur, -0.4, 0)
+    sharp = cv2.addWeighted(gray, 1.4, blur, -0.4, 0)
+    return ensure_bgr(sharp)
 
 
 def process_image(img, mode="auto", output="bw"):
     """Full pipeline: BGR image in -> scanned page out.
     mode   = "auto" (decide by itself), "text" or "photo"
     output = "bw" (black and white, like a printer) or "color" """
+    img = ensure_bgr(img)
     h, w = img.shape[:2]
     scale = 2600.0 / max(h, w)
     if scale < 1:
@@ -544,7 +615,10 @@ def process_image(img, mode="auto", output="bw"):
 
     # 3) clean it up in the right way
     if not photo:
-        return enhance_text_page(warped)          # text: always clean grey/white
-    if output == "bw":
-        return enhance_photo_gray(warped)         # photo in black and white
-    return enhance_photo(warped)                  # photo in colour
+        res = enhance_text_page(warped)          # text: always clean grey/white
+    elif output == "bw":
+        res = enhance_photo_gray(warped)         # photo in black and white
+    else:
+        res = enhance_photo(warped)              # photo in colour
+
+    return ensure_bgr(res)

@@ -1,0 +1,390 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Interactive Draggable 4-Dot Crop Box</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; user-select: none; -webkit-user-select: none; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: transparent;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 6px 0;
+    }
+    .toolbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      width: 100%;
+      max-width: 680px;
+      padding: 6px 12px;
+      background: #f8f9fa;
+      border: 1px solid #e9ecef;
+      border-radius: 8px 8px 0 0;
+      font-size: 13px;
+      color: #495057;
+    }
+    .badges {
+      display: flex;
+      gap: 12px;
+      align-items: center;
+    }
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      font-weight: 600;
+      font-size: 12px;
+    }
+    .dot-badge {
+      width: 11px;
+      height: 11px;
+      border-radius: 50%;
+      display: inline-block;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+    }
+    .btn-reset {
+      background: #fff;
+      border: 1px solid #ced4da;
+      border-radius: 4px;
+      padding: 3px 10px;
+      font-size: 12px;
+      font-weight: 500;
+      color: #495057;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .btn-reset:hover {
+      background: #e9ecef;
+      border-color: #adb5bd;
+    }
+    .canvas-container {
+      position: relative;
+      display: inline-block;
+      border: 2px solid #343a40;
+      border-top: none;
+      border-radius: 0 0 8px 8px;
+      overflow: hidden;
+      box-shadow: 0 4px 16px rgba(0,0,0,0.18);
+      background: #111;
+      max-width: 680px;
+    }
+    canvas {
+      display: block;
+      touch-action: none;
+    }
+    .instruction-bar {
+      margin-top: 6px;
+      font-size: 12px;
+      color: #6c757d;
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="toolbar" id="toolbar">
+    <div class="badges">
+      <span class="badge"><span class="dot-badge" style="background:#00E676;"></span>TL (Top-Left)</span>
+      <span class="badge"><span class="dot-badge" style="background:#FF9100;"></span>TR (Top-Right)</span>
+      <span class="badge"><span class="dot-badge" style="background:#D500F9;"></span>BL (Bottom-Left)</span>
+      <span class="badge"><span class="dot-badge" style="background:#FF1744;"></span>BR (Bottom-Right)</span>
+    </div>
+    <button class="btn-reset" id="btnReset" title="Reset corners to outer margin">🔄 Reset</button>
+  </div>
+
+  <div class="canvas-container" id="canvasContainer">
+    <canvas id="cropCanvas"></canvas>
+  </div>
+
+  <div class="instruction-bar">
+    👆 <b>Click &amp; drag</b> any colored corner dot to adjust the document boundary
+  </div>
+
+  <script>
+    const canvas = document.getElementById("cropCanvas");
+    const ctx = canvas.getContext("2d");
+    const btnReset = document.getElementById("btnReset");
+
+    let img = new Image();
+    let imgLoaded = false;
+    let imgWidth = 0;
+    let imgHeight = 0;
+    let currentImageSrc = "";
+    let hasUserDragged = false;
+
+    // Normalized points [0..1]: [TL, TR, BL, BR]
+    let points = [
+      { x: 0.05, y: 0.05, label: "TL", color: "#00E676" },
+      { x: 0.95, y: 0.05, label: "TR", color: "#FF9100" },
+      { x: 0.05, y: 0.95, label: "BL", color: "#D500F9" },
+      { x: 0.95, y: 0.95, label: "BR", color: "#FF1744" }
+    ];
+
+    let activeHandle = null;
+    let hoveredHandle = null;
+    const HIT_RADIUS = 30; // Generous touch & click radius
+    const DOT_RADIUS = 13;
+
+    function sendMessage(type, data) {
+      window.parent.postMessage({
+        isStreamlitMessage: true,
+        type: type,
+        ...data
+      }, "*");
+    }
+
+    function sendHeight() {
+      const height = document.body.scrollHeight + 14;
+      sendMessage("streamlit:setFrameHeight", { height: height });
+    }
+
+    function sendValue() {
+      // Send normalized coordinates [TL, TR, BL, BR] as float list to Streamlit
+      const coords = points.map(p => [p.x, p.y]);
+      sendMessage("streamlit:setComponentValue", { value: coords });
+    }
+
+    function resizeCanvas(maxDisplayWidth) {
+      if (!imgLoaded) return;
+      const aspect = imgHeight / imgWidth;
+      const displayW = Math.min(maxDisplayWidth || 640, window.innerWidth - 30);
+      const displayH = Math.round(displayW * aspect);
+
+      canvas.width = displayW;
+      canvas.height = displayH;
+      canvas.style.width = displayW + "px";
+      canvas.style.height = displayH + "px";
+
+      document.getElementById("toolbar").style.maxWidth = displayW + "px";
+      document.getElementById("canvasContainer").style.maxWidth = displayW + "px";
+
+      draw();
+      sendHeight();
+    }
+
+    function draw() {
+      if (!imgLoaded) return;
+      const w = canvas.width;
+      const h = canvas.height;
+
+      ctx.clearRect(0, 0, w, h);
+      ctx.drawImage(img, 0, 0, w, h);
+
+      // Pixel positions of the 4 dots
+      const pTL = { x: points[0].x * w, y: points[0].y * h };
+      const pTR = { x: points[1].x * w, y: points[1].y * h };
+      const pBL = { x: points[2].x * w, y: points[2].y * h };
+      const pBR = { x: points[3].x * w, y: points[3].y * h };
+
+      // 1. Shaded dark mask outside quadrilateral
+      ctx.save();
+      ctx.fillStyle = "rgba(0, 0, 0, 0.42)";
+      ctx.beginPath();
+      // Outer rect
+      ctx.rect(0, 0, w, h);
+      // Cut out polygon: TL -> TR -> BR -> BL
+      ctx.moveTo(pTL.x, pTL.y);
+      ctx.lineTo(pBL.x, pBL.y);
+      ctx.lineTo(pBR.x, pBR.y);
+      ctx.lineTo(pTR.x, pTR.y);
+      ctx.closePath();
+      ctx.fill("evenodd");
+      ctx.restore();
+
+      // 2. Connecting border lines
+      ctx.save();
+      ctx.strokeStyle = "#00E676";
+      ctx.lineWidth = 3.5;
+      ctx.shadowColor = "rgba(0,0,0,0.7)";
+      ctx.shadowBlur = 8;
+      ctx.beginPath();
+      ctx.moveTo(pTL.x, pTL.y);
+      ctx.lineTo(pTR.x, pTR.y);
+      ctx.lineTo(pBR.x, pBR.y);
+      ctx.lineTo(pBL.x, pBL.y);
+      ctx.closePath();
+      ctx.stroke();
+      ctx.restore();
+
+      // 3. Draw 4 draggable dots
+      points.forEach((pt, idx) => {
+        const px = pt.x * w;
+        const py = pt.y * h;
+        const isHovered = hoveredHandle === idx;
+        const isActive = activeHandle === idx;
+        const radius = (isActive || isHovered) ? DOT_RADIUS + 3 : DOT_RADIUS;
+
+        ctx.save();
+        ctx.shadowColor = "rgba(0,0,0,0.6)";
+        ctx.shadowBlur = 10;
+
+        // Outer white ring
+        ctx.beginPath();
+        ctx.arc(px, py, radius + 3, 0, Math.PI * 2);
+        ctx.fillStyle = "#ffffff";
+        ctx.fill();
+
+        // Colored circle
+        ctx.beginPath();
+        ctx.arc(px, py, radius, 0, Math.PI * 2);
+        ctx.fillStyle = pt.color;
+        ctx.fill();
+
+        // Inner white center
+        ctx.beginPath();
+        ctx.arc(px, py, radius * 0.35, 0, Math.PI * 2);
+        ctx.fillStyle = "#ffffff";
+        ctx.fill();
+        ctx.restore();
+
+        // Badge Label
+        ctx.save();
+        ctx.font = "bold 13px -apple-system, sans-serif";
+        const text = pt.label;
+        const tm = ctx.measureText(text);
+        const bx = px + (pt.x < 0.82 ? 14 : -36);
+        const by = py + (pt.y > 0.16 ? -12 : 24);
+
+        // Label background pill
+        ctx.fillStyle = "rgba(0, 0, 0, 0.78)";
+        ctx.beginPath();
+        if (ctx.roundRect) {
+          ctx.roundRect(bx - 5, by - 12, tm.width + 10, 17, 4);
+        } else {
+          ctx.rect(bx - 5, by - 12, tm.width + 10, 17);
+        }
+        ctx.fill();
+
+        ctx.fillStyle = pt.color;
+        ctx.fillText(text, bx, by);
+        ctx.restore();
+      });
+    }
+
+    function getCanvasPos(e) {
+      const rect = canvas.getBoundingClientRect();
+      const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+      const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+      const x = Math.max(0, Math.min(canvas.width, clientX - rect.left));
+      const y = Math.max(0, Math.min(canvas.height, clientY - rect.top));
+      return { x, y };
+    }
+
+    function findHandle(pos) {
+      const w = canvas.width;
+      const h = canvas.height;
+      for (let i = 0; i < points.length; i++) {
+        const px = points[i].x * w;
+        const py = points[i].y * h;
+        if (Math.hypot(pos.x - px, pos.y - py) <= HIT_RADIUS) {
+          return i;
+        }
+      }
+      return null;
+    }
+
+    function onPointerDown(e) {
+      const pos = getCanvasPos(e);
+      const hit = findHandle(pos);
+      if (hit !== null) {
+        activeHandle = hit;
+        canvas.style.cursor = "grabbing";
+        e.preventDefault();
+      }
+    }
+
+    function onPointerMove(e) {
+      const pos = getCanvasPos(e);
+      if (activeHandle !== null) {
+        points[activeHandle].x = Math.max(0.01, Math.min(0.99, pos.x / canvas.width));
+        points[activeHandle].y = Math.max(0.01, Math.min(0.99, pos.y / canvas.height));
+        draw();
+        e.preventDefault();
+      } else {
+        const hit = findHandle(pos);
+        if (hit !== hoveredHandle) {
+          hoveredHandle = hit;
+          canvas.style.cursor = hit !== null ? "grab" : "crosshair";
+          draw();
+        }
+      }
+    }
+
+    function onPointerUp(e) {
+      if (activeHandle !== null) {
+        activeHandle = null;
+        hasUserDragged = true;
+        canvas.style.cursor = hoveredHandle !== null ? "grab" : "crosshair";
+        draw();
+        sendValue();
+      }
+    }
+
+    canvas.addEventListener("mousedown", onPointerDown);
+    window.addEventListener("mousemove", onPointerMove);
+    window.addEventListener("mouseup", onPointerUp);
+
+    canvas.addEventListener("touchstart", onPointerDown, { passive: false });
+    window.addEventListener("touchmove", onPointerMove, { passive: false });
+    window.addEventListener("touchend", onPointerUp, { passive: false });
+
+    btnReset.addEventListener("click", () => {
+      points[0].x = 0.05; points[0].y = 0.05;
+      points[1].x = 0.95; points[1].y = 0.05;
+      points[2].x = 0.05; points[2].y = 0.95;
+      points[3].x = 0.95; points[3].y = 0.95;
+      hasUserDragged = true;
+      draw();
+      sendValue();
+    });
+
+    window.addEventListener("message", (event) => {
+      if (!event.data || event.data.type !== "streamlit:render") return;
+
+      const args = event.data.args;
+      const imageChanged = (args.image_base64 && args.image_base64 !== currentImageSrc);
+
+      if (imageChanged) {
+        currentImageSrc = args.image_base64;
+        hasUserDragged = false;
+        img.onload = () => {
+          imgLoaded = true;
+          imgWidth = img.naturalWidth || img.width;
+          imgHeight = img.naturalHeight || img.height;
+
+          if (args.initial_points && Array.isArray(args.initial_points) && args.initial_points.length === 4) {
+            points[0].x = args.initial_points[0][0];
+            points[0].y = args.initial_points[0][1];
+            points[1].x = args.initial_points[1][0];
+            points[1].y = args.initial_points[1][1];
+            points[2].x = args.initial_points[2][0];
+            points[2].y = args.initial_points[2][1];
+            points[3].x = args.initial_points[3][0];
+            points[3].y = args.initial_points[3][1];
+          }
+          resizeCanvas(args.max_width || 640);
+        };
+        img.src = currentImageSrc;
+      } else {
+        if (!hasUserDragged && args.initial_points) {
+          points[0].x = args.initial_points[0][0];
+          points[0].y = args.initial_points[0][1];
+          points[1].x = args.initial_points[1][0];
+          points[1].y = args.initial_points[1][1];
+          points[2].x = args.initial_points[2][0];
+          points[2].y = args.initial_points[2][1];
+          points[3].x = args.initial_points[3][0];
+          points[3].y = args.initial_points[3][1];
+          draw();
+        }
+      }
+    });
+
+    sendMessage("streamlit:componentReady", { apiVersion: 1 });
+  </script>
+</body>
+</html>

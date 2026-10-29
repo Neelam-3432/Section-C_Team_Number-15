@@ -155,48 +155,162 @@ def detect_document_corners(img):
     Detects the 4 corners of the document boundary.
 
     IPCV Syllabus Mapping - Unit I & III:
-    Uses Gaussian smoothing, Canny edge detection (50, 150), morphological closing,
-    and polygon approximation (approxPolyDP) to segment the document paper quadrilateral boundary.
+    Uses Gaussian smoothing, multi-threshold Canny edge detection, morphological closing,
+    and Douglas-Peucker polygon approximation (approxPolyDP) to segment the document quadrilateral.
 
     Returns:
         numpy.ndarray of shape (4, 2) in original image coordinate space, or None.
     """
     h, w = img.shape[:2]
-    small = cv2.resize(img, (960, 1280))
-    gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY) if img.ndim == 3 else small.copy()
+    max_dim = 1280.0
+    scale = max_dim / max(h, w) if max(h, w) > max_dim else 1.0
+    nh, nw = int(h * scale), int(w * scale)
+    small = cv2.resize(img, (nw, nh), interpolation=cv2.INTER_AREA) if scale < 1.0 else img.copy()
+    gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY) if small.ndim == 3 else small.copy()
     blurred = cv2.GaussianBlur(gray, (5, 5), 0)
 
-    # 1. Standard Canny gradient with morphological close
-    edges = cv2.Canny(blurred, 50, 150)
+    min_area = 0.05 * nw * nh
     kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (7, 7))
-    edges = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, kernel)
 
-    contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    min_area = 0.05 * 960 * 1280
+    # Multi-pass edge detection: Canny gradient variants, Otsu, and Adaptive thresholding
+    edge_maps = []
+    for t1, t2 in [(50, 150), (30, 100), (75, 200)]:
+        edges = cv2.Canny(blurred, t1, t2)
+        edges = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, kernel)
+        edge_maps.append(edges)
 
-    for c in sorted(contours, key=cv2.contourArea, reverse=True)[:5]:
-        area = cv2.contourArea(c)
-        if area > min_area:
-            peri = cv2.arcLength(c, True)
-            approx = cv2.approxPolyDP(c, 0.02 * peri, True)
-            if len(approx) == 4 and cv2.isContourConvex(approx):
-                return approx.reshape(4, 2).astype(np.float32) * np.array([w / 960.0, h / 1280.0], dtype=np.float32)
-
-    # 2. Adaptive Otsu fallback for soft indoor lighting
-    _, otsu_bin = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-    edges_otsu = cv2.Canny(otsu_bin, 50, 150)
+    _, otsu = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    edges_otsu = cv2.Canny(otsu, 50, 150)
     edges_otsu = cv2.morphologyEx(edges_otsu, cv2.MORPH_CLOSE, kernel)
-    contours_otsu, _ = cv2.findContours(edges_otsu, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    edge_maps.append(edges_otsu)
 
-    for c in sorted(contours_otsu, key=cv2.contourArea, reverse=True)[:5]:
-        area = cv2.contourArea(c)
-        if area > min_area:
-            peri = cv2.arcLength(c, True)
-            approx = cv2.approxPolyDP(c, 0.02 * peri, True)
-            if len(approx) == 4 and cv2.isContourConvex(approx):
-                return approx.reshape(4, 2).astype(np.float32) * np.array([w / 960.0, h / 1280.0], dtype=np.float32)
+    adapt = cv2.adaptiveThreshold(blurred, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 11, 2)
+    edges_adapt = cv2.Canny(adapt, 50, 150)
+    edges_adapt = cv2.morphologyEx(edges_adapt, cv2.MORPH_CLOSE, kernel)
+    edge_maps.append(edges_adapt)
+
+    for edge_img in edge_maps:
+        for mode in (cv2.RETR_EXTERNAL, cv2.RETR_LIST):
+            contours, _ = cv2.findContours(edge_img, mode, cv2.CHAIN_APPROX_SIMPLE)
+            for c in sorted(contours, key=cv2.contourArea, reverse=True)[:8]:
+                area = cv2.contourArea(c)
+                if area > min_area:
+                    peri = cv2.arcLength(c, True)
+                    for eps_factor in [0.015, 0.02, 0.03, 0.04]:
+                        approx = cv2.approxPolyDP(c, eps_factor * peri, True)
+                        if len(approx) == 4 and cv2.isContourConvex(approx):
+                            pts = approx.reshape(4, 2).astype(np.float32)
+                            return pts * (1.0 / scale)
 
     return None
+
+
+def draw_crop_box(img, pts):
+    """
+    Draws an interactive 4-dot crop box on the image.
+
+    Parameters:
+        img: Input image (numpy array, 2D or 3D BGR).
+        pts: np.ndarray of shape (4, 2) in order [TL, TR, BL, BR].
+
+    Returns:
+        Annotated BGR image with 4 distinct corner dots, colored outlines,
+        and connecting polygon lines.
+    """
+    annotated = img.copy()
+    if annotated.ndim == 2:
+        annotated = cv2.cvtColor(annotated, cv2.COLOR_GRAY2BGR)
+
+    h, w = annotated.shape[:2]
+    pts_int = pts.astype(np.int32)
+    # Order for polygon: TL -> TR -> BR -> BL
+    poly_pts = np.array([pts_int[0], pts_int[1], pts_int[3], pts_int[2]], dtype=np.int32)
+
+    line_thickness = max(2, int(min(h, w) * 0.005))
+    cv2.polylines(annotated, [poly_pts], isClosed=True, color=(0, 255, 0), thickness=line_thickness)
+
+    dots = [
+        (pts_int[0], "TL", (0, 220, 0)),     # Green
+        (pts_int[1], "TR", (0, 140, 255)),   # Orange
+        (pts_int[2], "BL", (255, 0, 180)),   # Magenta / Purple
+        (pts_int[3], "BR", (0, 0, 240)),     # Red
+    ]
+    radius = max(8, int(min(h, w) * 0.016))
+
+    for (x, y), label, color in dots:
+        # Outer white ring
+        cv2.circle(annotated, (int(x), int(y)), radius + 3, (255, 255, 255), -1)
+        # Colored circle
+        cv2.circle(annotated, (int(x), int(y)), radius, color, -1)
+        # Inner white dot
+        cv2.circle(annotated, (int(x), int(y)), max(2, radius // 3), (255, 255, 255), -1)
+        # Text label with dark background shadow
+        offset_x = 14 if x < w * 0.8 else -45
+        offset_y = -14 if y > h * 0.15 else 25
+        cv2.putText(
+            annotated,
+            label,
+            (int(x) + offset_x + 1, int(y) + offset_y + 1),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.75,
+            (0, 0, 0),
+            3,
+            cv2.LINE_AA,
+        )
+        cv2.putText(
+            annotated,
+            label,
+            (int(x) + offset_x, int(y) + offset_y),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.75,
+            (255, 255, 255),
+            2,
+            cv2.LINE_AA,
+        )
+
+    return annotated
+
+
+def crop_and_straighten(img, pts):
+    """
+    Crops and straightens the region within 4 corner dots using perspective homography.
+    pts: np.ndarray of shape (4, 2) in order [TL, TR, BL, BR].
+    """
+    rect = order_points(pts)
+    tl, tr, bl, br = rect
+    width = int(max(np.linalg.norm(br - bl), np.linalg.norm(tr - tl)))
+    height = int(max(np.linalg.norm(tr - br), np.linalg.norm(tl - bl)))
+    if width < 30 or height < 30:
+        return img
+    pts1 = np.float32(rect)
+    pts2 = np.float32([[0, 0], [width, 0], [0, height], [width, height]])
+    matrix = cv2.getPerspectiveTransform(pts1, pts2)
+    return cv2.warpPerspective(img, matrix, (width, height))
+
+
+def straighten_document(img, crop=False):
+    """
+    Detects the four corners of a document and straightens a tilted photograph
+    using 4-point perspective homography transform.
+
+    IPCV Syllabus Mapping - Unit I & III:
+    1. Grayscale conversion & Gaussian smoothing for noise reduction.
+    2. Multi-pass edge detection & morphological closing.
+    3. Contour analysis & Douglas-Peucker polygon approximation (approxPolyDP) to locate 4 corners.
+    4. Topological corner ordering: TL, TR, BL, BR.
+    5. Perspective transformation matrix calculation (cv2.getPerspectiveTransform)
+       and rectification (cv2.warpPerspective) to map arbitrary tilted quadrilateral to a rectangle.
+
+    Returns:
+        (straightened_image, detected_corners)
+        - straightened_image: Rectified image (or copy of original if corners not detected)
+        - detected_corners: np.ndarray of shape (4, 2) or None
+    """
+    corners = detect_document_corners(img)
+    if corners is not None:
+        straightened = warp_perspective(img, corners, crop=crop)
+        return straightened, corners
+    return img.copy(), None
 
 
 def visualize_document_boundary(img, corners=None):
@@ -418,12 +532,7 @@ def process_image(img, mode="auto", output="bw"):
     else:
         photo = is_photo(img)
 
-    # 1) find the paper corners on a small copy
-    small = cv2.resize(img, (960, 1280))
-    gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
-    blurred = cv2.GaussianBlur(gray, (5, 5), 1)
-    edges = cv2.Canny(blurred, 190, 190)
-    edges = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, np.ones((5, 5), np.uint8))
+    # 1) find the paper corners and straighten
     biggest = detect_document_corners(img)
 
     # 2) flatten (photos are NOT cropped by ink, so we never cut the face)

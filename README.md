@@ -38,7 +38,7 @@ Capturing documents using smartphone cameras is standard practice, but mobile ca
 
 | IPCV Syllabus Unit | Theoretical Topics Covered | Scanify Implementation & Feature |
 | :--- | :--- | :--- |
-| **Unit I: Image Acquisition, Sampling & Coordinate Relationships** | • Digital image representation<br>• Pixel relationships & connectivity<br>• Spatial coordinate transformations<br>• Projective geometry & sampling | • EXIF orientation matrix alignment (`ImageOps.exif_transpose`)<br>• 4-corner spatial topological ordering (`order_points`)<br>• Subpixel coordinate mapping & Euclidean dimension scaling<br>• Perspective Homography matrix calculation (`warpPerspective`) |
+| **Unit I: Image Acquisition, Sampling & Coordinate Relationships** | • Digital image representation<br>• Pixel relationships & connectivity<br>• Spatial coordinate transformations<br>• Projective geometry & sampling | • EXIF orientation matrix alignment (`ImageOps.exif_transpose`)<br>• 4-corner spatial topological ordering (`order_points`)<br>• Subpixel coordinate mapping & Euclidean dimension scaling<br>• Interactive draggable 4-dot crop canvas & Perspective Homography calculation (`warpPerspective`) |
 | **Unit II: Image Enhancement, Histogram Processing & Noise Filtering** | • Spatial convolution & averaging<br>• Median order-statistic filtering<br>• Global Histogram Equalization<br>• Adaptive Equalization (CLAHE)<br>• Illumination normalization<br>• Unsharp masking & high-boost sharpening | • Gaussian linear smoothing with dynamic kernels ($3 \times 3$ to $15 \times 15$)<br>• Non-linear median filter for salt-and-pepper noise removal<br>• Discrete 256-bin intensity histogram generation<br>• Cumulative Distribution Function (CDF) equalization<br>• Chroma preservation via luminance equalizing in YCrCb/LAB<br>• Morphological background division and unsharp mask sharpening |
 | **Unit III: Thresholding & Region-Based Segmentation** | • Global optimal thresholding<br>• Local adaptive thresholding<br>• Canny edge detection<br>• Polygonal boundary approximation | • Otsu's algorithm maximizing between-class variance ($\sigma_B^2$)<br>• Adaptive Gaussian-weighted local neighborhood thresholding<br>• Adaptive Arithmetic Mean local thresholding<br>• Canny gradient filtering with morphological closing<br>• Douglas-Peucker polygon approximation (`approxPolyDP`) |
 
@@ -123,6 +123,7 @@ flowchart TD
 
     subgraph S3["3. Selected Processing Tool"]
         E5 & E6 --> F{"User Selected Tool"}
+        F -->|Detect Corners & Straighten| G0["warpPerspective + Perspective Homography Rectification"]
         F -->|Scan a Document| G1["warpPerspective + Illumination Division + Unsharp Mask"]
         F -->|Make Text Stand Out| G2["Otsu / Adaptive Gaussian / Adaptive Mean Thresholding"]
         F -->|Improve Image Clarity| G3["Global Histogram Equalization / CLAHE (Luminance)"]
@@ -130,7 +131,7 @@ flowchart TD
     end
 
     subgraph S4["4. User Interface & Output (Streamlit)"]
-        G1 & G2 & G3 & G4 --> H1["Side-by-Side Original vs. Processed View"]
+        G0 & G1 & G2 & G3 & G4 --> H1["Side-by-Side Original vs. Processed View"]
         H1 --> H3["In-Memory Multi-Page PDF Compilation (PIL BytesIO)"]
         H3 --> H4["Download Scanned PDF Button"]
     end
@@ -145,7 +146,7 @@ flowchart TD
 | **Member 1** | **Noise Filtering & Smoothing Specialist** | 
  • Implemented linear spatial Gaussian smoothing (`cv2.GaussianBlur`)<br>• Implemented non-linear order-statistic median filtering (`cv2.medianBlur`)<br>• Designed dynamic aperture kernel controls ($3 \times 3$ to $15 \times 15$)<br>• Authored noise attenuation comparative analysis in [`processing.py`](file:///d:/Neelam_D/Coding/IPCV_DOC_SCAN/Document-Scanner/processing.py) |
 | **Member 2** | **Segmentation & Thresholding Specialist** |
- • Engineered Canny edge & Douglas-Peucker 4-corner detection (`approxPolyDP`)<br>• Created topological 4-point coordinate ordering algorithm (`order_points`)<br>• Implemented global Otsu thresholding and localized Adaptive Gaussian/Mean thresholding |
+ • Engineered Canny edge & Douglas-Peucker 4-corner detection (`approxPolyDP`)<br>• Created topological 4-point coordinate ordering algorithm (`order_points`)<br>• Implemented 4-corner detection & perspective homography straightening (`straighten_document`)<br>• Implemented global Otsu thresholding and localized Adaptive Gaussian/Mean thresholding |
 | **Member 3** | **Histogram & Enhancement Specialist** |
 • Implemented 256-bin discrete intensity histogram generation (`cv2.calcHist`)<br>• Built Global Histogram Equalization preserving chromaticity via YCrCb/LAB<br>• Integrated Contrast Limited Adaptive Histogram Equalization (CLAHE) |
 | **Member 4** | **UI/UX, Integration & Documentation Lead** |
@@ -198,7 +199,7 @@ To verify all operations across all sample images without opening a browser:
 
 | Test Case | Input Characteristics | Applied Tool | Expected & Observed Result |
 | :--- | :--- | :--- | :--- |
-| **TC-01: Skewed Document** | Page captured at an oblique angle on a dark table surface. | **Scan a Document** | 4 corners detected accurately, perspective warp flattens the page into a crisp rectangular image. |
+| **TC-01: Skewed Document** | Page captured at an oblique angle on a dark table surface. | **Detect Corners & Straighten** / **Scan a Document** | 4 corners detected accurately, perspective warp flattens the page into a crisp rectangular image. |
 | **TC-02: Uneven Shadow** | Document photographed under handheld phone shadow / desk lamp gradient. | **Make Text Stand Out** *(Adaptive Gaussian)* | Local neighborhood thresholding successfully isolates text characters in shadowed regions where global thresholding failed. |
 | **TC-03: Faded Printed Receipt** | Low dynamic range thermal receipt with weak ink contrast. | **Improve Image Clarity** *(CLAHE)* | Restores character readability and deepens text intensity without blowing out the light background paper. |
 | **TC-04: Grainy Low-Light Photo** | High-ISO camera capture with severe salt-and-pepper noise. | **Remove Image Noise** *(Median Filter)* | Eliminates isolated white and dark noise pixels completely while preserving fine stroke boundaries. |

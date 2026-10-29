@@ -1,0 +1,13 @@
+.venv/
+__pycache__/
+*.py[cod]
+.env
+.DS_Store
+
+.git-old-backup/
+.venv/
+venv/
+.env
+
+# Generated output files
+Output/

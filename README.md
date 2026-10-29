@@ -48,8 +48,7 @@ Capturing documents using smartphone cameras is standard practice, but mobile ca
 
 ### 1. Interactive Four-Point Perspective Homography Transform (Unit I)
 * **What it does**: Straightens an angled, tilted photograph of a document into a flat, top-down scan using 4 user-placed corner points.
-* **How it works**: A handheld camera photo skews parallel document borders due to perspective projection. Any planar quadrilateral can be mapped to an upright rectangle using a $3 \times 3$ Homography matrix $\mathbf{H}$:
-  $$\begin{bmatrix} x' \\ y' \\ 1 \end{bmatrix} \sim \mathbf{H} \begin{bmatrix} x \\ y \\ 1 \end{bmatrix} = \begin{bmatrix} h_{11} & h_{12} & h_{13} \\ h_{21} & h_{22} & h_{23} \\ h_{31} & h_{32} & h_{33} \end{bmatrix} \begin{bmatrix} x \\ y \\ 1 \end{bmatrix}$$
+* **How it works**: The document is displayed on the screen with four draggable points representing its corners: top-left, top-right, bottom-left, and bottom-right. The user can move these points to align them with the actual corners of the document. Once the corners are selected, the application applies a perspective transformation using OpenCV to correct the tilt and convert the document into a straight, rectangular image. This makes the document appear as if it were scanned directly from the front, improving its alignment and readability. The process also works when the document and its background have similar colors, as long as the corners can be identified correctly
 * **Corner Ordering (`order_points`)**:
   Before computing $\mathbf{H}$, the 4 draggable corner coordinates are assigned topological roles:
   - $\text{Top-Left} (TL)$: Minimum sum $(x + y)$
@@ -63,13 +62,9 @@ Capturing documents using smartphone cameras is standard practice, but mobile ca
 ### 2. Gaussian Smoothing vs. Median Filtering (Unit II)
 * **Gaussian Filter (Linear Smoothing)**:
   * **Intuition**: Blurs the image gently by calculating a weighted average of neighbor pixels, where closer pixels have higher weights following a 2D Gaussian distribution.
-  * **Formula**:
-    $$G(x, y) = \frac{1}{2\pi \sigma^2} \exp\left(-\frac{x^2 + y^2}{2\sigma^2}\right)$$
   * **Best for**: Smooth sensor noise and subtle camera grain.
 * **Median Filter (Non-linear Order-Statistics)**:
   * **Intuition**: Slides a window over the image, sorts all pixels numerically, and picks the exact middle (median) value.
-  * **Formula**:
-    $$f_{\text{median}}(x, y) = \text{median}\{g(s, t) \mid (s, t) \in S_{xy}\}$$
   * **Best for**: Salt-and-pepper noise and speckles. Because impulse noise values ($0$ or $255$) are statistical outliers, they never become the median; text edges remain razor sharp.
 
 ---
@@ -77,8 +72,6 @@ Capturing documents using smartphone cameras is standard practice, but mobile ca
 ### 3. Histogram Equalization: Global vs. CLAHE (Unit II)
 * **Global Histogram Equalization**:
   * **Intuition**: Spreads out frequent intensity values across the entire $0$ to $255$ scale using the Cumulative Distribution Function (CDF).
-  * **Formula**:
-    $$s_k = T(r_k) = (L - 1) \sum_{j=0}^{k} p_r(r_j) = \frac{L - 1}{MN} \sum_{j=0}^{k} n_j$$
   * **Color Preservation**: On color documents, equalization is executed only on the **Luminance channel** ($Y$ in YCrCb or $L$ in LAB) rather than independently on RGB, preserving chromaticity without color shifts.
 * **CLAHE (Contrast Limited Adaptive Histogram Equalization)**:
   * **Intuition**: Global equalization can over-amplify noise in uniform areas (like blank paper margins). CLAHE divides the image into an $8 \times 8$ grid of tiles, clips histogram peaks exceeding a `clipLimit`, and smooths tile boundaries using bilinear interpolation.
@@ -88,8 +81,6 @@ Capturing documents using smartphone cameras is standard practice, but mobile ca
 ### 4. Thresholding: Otsu vs. Adaptive (Unit III)
 * **Otsu’s Global Optimal Thresholding**:
   * **Intuition**: Automatically finds a single cutoff value that cleanly separates foreground ink from background paper by maximizing the separation (variance) between the two groups.
-  * **Formula**:
-    $$\sigma_B^2(t) = \omega_0(t) \, \omega_1(t) \, [\mu_0(t) - \mu_1(t)]^2$$
     where $\omega_0, \omega_1$ are probabilities of background and foreground classes, and $\mu_0, \mu_1$ are their means.
 * **Adaptive Thresholding (Gaussian & Mean)**:
   * **Intuition**: When an image has harsh shadows (e.g., hand or phone shadow), a single global threshold fails. Adaptive thresholding calculates a distinct threshold for every pixel based on its local $(B \times B)$ window minus constant $C$.

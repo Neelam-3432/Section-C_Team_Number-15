@@ -10,14 +10,26 @@ from processing import (
     apply_noise_filter,
     apply_threshold,
     process_image,
-    render_histogram_image,
+    #render_histogram_image,
     rotate_image,
-    visualize_document_boundary,
+    #visualize_document_boundary,
 )
 
 # Must be the FIRST Streamlit command
 st.set_page_config(page_title="Scanify - Document Scanner", page_icon="📄", layout="wide")
-
+# Hide the Deploy button
+st.markdown(
+    """
+    <style>
+        [data-testid="stDeployButton"],
+        .stAppDeployButton {
+            display: none !important;
+        }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+#hide deploy btn
 CSS = """
 <style>
     html, body, [class*="css"] { font-family: 'Segoe UI', system-ui, sans-serif; }
@@ -30,6 +42,12 @@ CSS = """
     .stDownloadButton button:hover { background: #2980b9 !important; transform: translateY(-1px); }
 </style>
 """
+
+
+
+
+
+
 
 MODES = {
     "Auto (recommended)": "auto",
@@ -135,19 +153,19 @@ def main():
     if rotate_option == "Custom Tilt Angle":
         custom_angle = st.sidebar.slider("Tilt Angle (°)", min_value=-45, max_value=45, value=0, step=1)
 
-    # Display Controls
-    st.sidebar.markdown("---")
-    st.sidebar.markdown("### 👁️ Display Options")
-    show_boundary = st.sidebar.checkbox(
-        "Highlight Document Corners",
-        value=False,
-        help="Shows the 4 detected corners and boundary polygon.",
-    )
-    show_histogram = st.sidebar.checkbox(
-        "Show Intensity Histograms",
-        value=False,
-        help="Shows the 256-bin brightness distribution before and after.",
-    )
+    # # Display Controls
+    # st.sidebar.markdown("---")
+    # st.sidebar.markdown("### 👁️ Display Options")
+    # show_boundary = st.sidebar.checkbox(
+    #     "Highlight Document Corners",
+    #     value=False,
+    #     help="Shows the 4 detected corners and boundary polygon.",
+    # )
+    # show_histogram = st.sidebar.checkbox(
+    #     "Show Intensity Histograms",
+    #     value=False,
+    #     help="Shows the 256-bin brightness distribution before and after.",
+    # )
 
     # --- Main Page Settings ---
     col1, col2 = st.columns(2)
@@ -185,12 +203,11 @@ def main():
                         img = rotate_image(img, 270)
                     elif rotate_option == "Custom Tilt Angle" and custom_angle != 0:
                         img = rotate_image(img, custom_angle)
+                        st.write("Image dimensions after rotation:", img.shape)
 
                     # 2. Document boundary visualization
-                    if show_boundary:
-                        display_original = visualize_document_boundary(img)
-                    else:
-                        display_original = img
+                   
+                    display_original = img
 
                     # 3. Main Operation Execution
                     if operation == "Full Document Scanner":
@@ -217,26 +234,27 @@ def main():
                     st.markdown(f"#### 📄 Page {idx + 1}: {uploaded_file.name}")
                     c_left, c_right = st.columns(2)
                     with c_left:
-                        orig_cap = "Original Image" + (" (with Detected Corners)" if show_boundary else "")
+                        #orig_cap = "Original Image" + (" (with Detected Corners)" if show_boundary else "")
+                        orig_cap = "Original Image"
                         st.image(to_pil(display_original), caption=orig_cap, use_container_width=True)
                     with c_right:
                         st.image(scanned_pil, caption=f"Result: {operation}", use_container_width=True)
 
                     # 5. Optional Histogram Display
-                    if show_histogram:
-                        h_left, h_right = st.columns(2)
-                        with h_left:
-                            st.image(
-                                to_pil(render_histogram_image(img)),
-                                caption=f"Original Histogram (Page {idx + 1})",
-                                use_container_width=True,
-                            )
-                        with h_right:
-                            st.image(
-                                to_pil(render_histogram_image(result)),
-                                caption=f"Processed Histogram (Page {idx + 1})",
-                                use_container_width=True,
-                            )
+                    # if show_histogram:
+                    #     h_left, h_right = st.columns(2)
+                    #     with h_left:
+                    #         st.image(
+                    #             to_pil(render_histogram_image(img)),
+                    #             caption=f"Original Histogram (Page {idx + 1})",
+                    #             use_container_width=True,
+                    #         )
+                    #     with h_right:
+                    #         st.image(
+                    #             to_pil(render_histogram_image(result)),
+                    #             caption=f"Processed Histogram (Page {idx + 1})",
+                    #             use_container_width=True,
+                    #         )
 
                     st.markdown("---")
 

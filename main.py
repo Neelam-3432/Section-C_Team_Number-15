@@ -11,14 +11,10 @@ from processing import (
     apply_noise_filter,
     apply_threshold,
     crop_and_straighten,
-    detect_document_corners,
-    draw_crop_box,
     ensure_bgr,
     order_points,
     process_image,
     rotate_image,
-    straighten_document,
-    visualize_document_boundary,
 )
 
 # Must be the FIRST Streamlit command
@@ -74,8 +70,8 @@ def main():
     st.sidebar.markdown("## 🛠️ Image Tools")
 
     TOOL_DESCRIPTIONS = {
-        "Detect Corners & Straighten": "Capture and straighten any document using an interactive 4-dot crop box.",
-        "Scan a Document": "Detect document edges, straighten the page, and improve readability.",
+        "Detect Corners & Straighten": "Capture and straighten any document using the interactive 4-dot crop box.",
+        "Scan a Document": "Enhance and clean document readability (automatic illumination leveling and text sharpening).",
         "Remove Image Noise": "Reduce graininess or speckles using Gaussian or Median filter.",
         "Make Text Stand Out": "Convert image to black & white using Otsu or Adaptive thresholding.",
         "Improve Image Clarity": "Enhance contrast using Global Equalization or CLAHE.",
@@ -219,23 +215,13 @@ def main():
 
                     # 2. Main Operation Execution
                     if operation == "Detect Corners & Straighten":
-                        # Smart initial default positions
-                        auto_c = detect_document_corners(working_img)
-                        if auto_c is not None:
-                            ord_pts = order_points(auto_c)
-                            init_norm = [
-                                [float(np.clip(ord_pts[0][0] / w, 0.01, 0.99)), float(np.clip(ord_pts[0][1] / h, 0.01, 0.99))],
-                                [float(np.clip(ord_pts[1][0] / w, 0.01, 0.99)), float(np.clip(ord_pts[1][1] / h, 0.01, 0.99))],
-                                [float(np.clip(ord_pts[2][0] / w, 0.01, 0.99)), float(np.clip(ord_pts[2][1] / h, 0.01, 0.99))],
-                                [float(np.clip(ord_pts[3][0] / w, 0.01, 0.99)), float(np.clip(ord_pts[3][1] / h, 0.01, 0.99))],
-                            ]
-                        else:
-                            init_norm = [[0.06, 0.06], [0.94, 0.06], [0.06, 0.94], [0.94, 0.94]]
+                        # Default 4-corner positions inset slightly from page borders
+                        init_norm = [[0.06, 0.06], [0.94, 0.06], [0.06, 0.94], [0.94, 0.94]]
 
                         c_left, c_right = st.columns([1.1, 0.9])
                         with c_left:
                             st.markdown("##### 🖐️ Interactive 4-Dot Canvas")
-                            st.caption("Drag the 4 colored dots to position corners on the document:")
+                            st.caption("Drag the 4 colored dots directly to the corners of the document:")
                             pts = draggable_crop_box(working_img, initial_points=init_norm, key=f"drag_crop_{idx}")
 
                         with c_right:
